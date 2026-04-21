@@ -29,11 +29,8 @@ USER user
 RUN echo 'alias python=python3' >> ~/.bashrc && \
     echo 'alias pip=pip3' >> ~/.bashrc
 
-# Copy .pypirc configuration file from build context to Docker image user's home directory
-# Note: The .pypirc file must be in the build context (project root) for this to work.
-# To use your home directory .pypirc, copy it first: cp ~/.pypirc .pypirc
-# Then build: docker build -t <image> .
-COPY --chown=user:user .pypirc /home/user/.pypirc
+# PyPI credentials are optional and gitignored; do not COPY .pypirc here (breaks clean builds).
+# To use them inside the container: docker run -it --rm -v ~/.pypirc:/home/user/.pypirc:ro ...
 
 # Default command
 CMD ["/bin/bash"]
