@@ -65,6 +65,8 @@ Batch transcription of a **WAV** file (16- or 24-bit PCM; same rules as `moonshi
       "duration": 1.2,
       "line_id": 0,
       "is_complete": true,
+      "has_speaker_id": true,
+      "speaker_id": 123456789,
       "speaker_index": 0,
       "words": null
     }
@@ -73,6 +75,28 @@ Batch transcription of a **WAV** file (16- or 24-bit PCM; same rules as `moonshi
 ```
 
 When word timestamps are enabled, each line may include a `words` array of `{ "word", "start", "end", "confidence" }`.
+
+### Speaker identification (diarization)
+
+Moonshine can assign a **speaker label to each transcript line** (each line is one VAD speech segment). The reference HTTP service **does not add extra HTTP flags** for this: it relies on the **library default**, which keeps speaker identification **enabled** (`identify_speakers` defaults to on in the native transcriber). Lines in responses and WebSocket events therefore include:
+
+| Field | Meaning |
+|--------|--------|
+| `has_speaker_id` | Whether a speaker has been assigned for this line (often `true` by the time the segment is complete). |
+| `speaker_id` | Opaque cluster id (uint64) for correlating the same speaker **within a transcriber session**. |
+| `speaker_index` | `0`, `1`, … in **order of first appearance** (“Speaker 1”, “Speaker 2”, …). |
+
+**Batch (`POST /v1/transcribe`)** — After transcription, read `lines[*].has_speaker_id`, `speaker_id`, and `speaker_index` next to `text` and timings.
+
+**Stream (`WebSocket`)** — The same fields appear on the `line` object inside `line_started`, `line_updated`, `line_text_changed`, and `line_completed` messages. Partial updates may show `has_speaker_id: false` until the segment is long enough or finalized; prefer **`line_completed`** (or final `is_complete: true`) when you need a stable speaker for a segment.
+
+**Important caveats**
+
+- **Experimental accuracy** — Treat labels as best-effort; tune VAD and clustering at the transcriber layer if needed (see the main [README](../README.md) *Transcriber options*: `identify_speakers`, `speaker_id_cluster_threshold`, `vad_*`).
+- **Segments, not words** — Speaker id is computed **per line / VAD segment**, not per word.
+- **Shared transcriber cache** — The example service reuses one `Transcriber` per `(language, word_timestamps)` (see [Model cache and concurrency](#model-cache-and-concurrency)). **Speaker clustering state is tied to that instance**, so unrelated recordings sent back-to-back through the **same** cache entry can **share** `speaker_index` / cluster history. For **isolated** diarization per file or per client session, use a **dedicated service instance**, **per-session transcriber** (requires extending the example), or **process locally** with a new `Transcriber` per job via the Python API.
+
+**Disabling or tuning via HTTP** — The stock example only passes `word_timestamps` into `Transcriber` options. To expose **`identify_speakers`** or **`speaker_id_cluster_threshold`** over HTTP/WebSocket, extend the service to forward those option strings (and widen the cache key so settings do not collide).
 
 ### `WebSocket /v1/transcribe/stream`
 
@@ -113,6 +137,7 @@ The reference service keeps a **small LRU cache** of `Transcriber` instances key
 
 Implications:
 
+- **Speaker identification** — That same cached instance also keeps **speaker clustering state** for its lifetime. Unrelated clients or files hitting the same cache entry may see **non-independent** `speaker_index` semantics (see [Speaker identification](#speaker-identification-diarization)).
 - **Throughput**: single process serializes work per model key; for more throughput, run **multiple replicas** behind a load balancer (each replica downloads its own cache unless you share a volume).
 - **Many languages**: either allow the cache to grow (increase limit via env) or run **one service instance per language**.
 
@@ -146,3 +171,4 @@ Do **not** expose the STT port on the public internet without **TLS** and **auth
 
 - [Word-level timestamps](word-level-timestamps.md)
 - Python API: [`python/README.md`](../python/README.md)
+- Transcriber options (VAD, `identify_speakers`, `speaker_id_cluster_threshold`): [`README.md`](../README.md) (Transcriber / `options`)
